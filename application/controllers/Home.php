@@ -14,7 +14,6 @@ class Home extends CI_Controller {
         $this->load->helper(['url', 'form']);
 		$this->load->helper('timesheet');
         $this->ci = &get_instance();
-
        
     }
 
