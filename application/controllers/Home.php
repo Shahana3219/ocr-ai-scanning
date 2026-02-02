@@ -1,292 +1,442 @@
 <?php
-defined('BASEPATH') or exit('No direct script access allowed');
-class Home extends CI_Controller {
-		
-	public $ci;
-    public function __construct() {
-        parent::__construct();
-        // $this->load->database();
-        $this->load->model([
-            'ocr_model',
-        ]);
-		
-        $this->load->library(['form_validation', 'session']);
-        $this->load->helper(['url', 'form']);
-		$this->load->helper('timesheet');
-        $this->ci = &get_instance();
-       
-    }
+defined('BASEPATH') OR exit('No direct script access allowed');
 
-	public function view_function($pageName, $rdata = '', $sdata = '', $ndata = '')
+class Home extends CI_Controller
+{
+    public function __construct()
     {
-        $sdata['bcdp'] = 2;
-        $sdata = array();
-        $ndata = array();
-        $this->load->view('template/header', $sdata);
-        $this->load->view('template/navbar', $ndata);
-        $this->load->view($pageName, $rdata);
-        $this->load->view('template/footer', $rdata);
-        $this->load->view('template/script', $rdata);
-        $this->load->view('template/last', $rdata);
-    }
-    
-    public function index() {
+        parent::__construct();
 
-		$rdata = array();
-        $sdata = array();
-        $ndata = array();
-        $rdata['pagetitle'] = '';
-		print_r('ss');die;
-		// print_r($rdata);die;	
-        $this->view_function('', $rdata, $sdata, $ndata);
+        // Load model (must exist: application/models/ocr_model.php)
+        $this->load->model('ocr_model');
+
+        $this->load->library(['form_validation', 'session', 'upload']);
+        $this->load->helper(['url', 'form']);
     }
-    public function invoice_form() 
+
+    // Page
+    public function invoice_form()
     {
         $this->load->view('invoice_form');
     }
+
+    // AJAX Upload + Normalize + Insert DB
     public function upload_invoice_ocr()
-{
-    // Always return JSON
-    header('Content-Type: application/json; charset=utf-8');
+    {
+        header('Content-Type: application/json; charset=utf-8');
 
-    // Only POST
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-        echo json_encode([
-            'status'  => 'error',
-            'message' => 'Invalid request method'
-        ]);
-        return;
-    }
-
-    // Check file exists
-    if (empty($_FILES['invoice_file']['name'])) {
-        echo json_encode([
-            'status'  => 'error',
-            'message' => 'No file selected'
-        ]);
-        return;
-    }
-
-    // ---------- Server-side validation (MIME + size) ----------
-    $allowed_mime = [
-        'image/png',
-        'image/jpeg',
-        'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    ];
-
-    $tmp  = $_FILES['invoice_file']['tmp_name'];
-    $mime = function_exists('mime_content_type') ? mime_content_type($tmp) : ($_FILES['invoice_file']['type'] ?? '');
-    $size = (int) ($_FILES['invoice_file']['size'] ?? 0);
-
-    if (!in_array($mime, $allowed_mime)) {
-        echo json_encode([
-            'status'  => 'error',
-            'message' => 'Invalid file type'
-        ]);
-        return;
-    }
-
-    if ($size > 5 * 1024 * 1024) {
-        echo json_encode([
-            'status'  => 'error',
-            'message' => 'File must be below 5MB'
-        ]);
-        return;
-    }
-
-    // ---------- Create folders ----------
-    $invoice_id = uniqid('inv_');
-
-    // Use your required folder: assets/uploads
-    $basePath       = FCPATH . 'assets/uploads/invoices/' . $invoice_id . '/';
-    $originalPath   = $basePath . 'original/';
-    $normalizedPath = $basePath . 'normalized/';
-
-    if (!is_dir($originalPath) && !mkdir($originalPath, 0777, true)) {
-        echo json_encode(['status'=>'error','message'=>'Cannot create original folder']);
-        return;
-    }
-    if (!is_dir($normalizedPath) && !mkdir($normalizedPath, 0777, true)) {
-        echo json_encode(['status'=>'error','message'=>'Cannot create normalized folder']);
-        return;
-    }
-
-    // ---------- Upload using CI Upload library ----------
-    $config['upload_path']   = $originalPath;
-    $config['allowed_types'] = 'jpg|jpeg|png|pdf|doc|docx';
-    $config['max_size']      = 5120; // 5MB in KB
-    $config['encrypt_name']  = true;
-
-    $this->load->library('upload', $config);
-
-    if (!$this->upload->do_upload('invoice_file')) {
-        echo json_encode([
-            'status'  => 'error',
-            'message' => $this->upload->display_errors('', '')
-        ]);
-        return;
-    }
-
-    $up = $this->upload->data();
-    $fullPath = $up['full_path'];       // absolute server path
-    $fileName = $up['file_name'];
-    $ext      = strtolower($up['file_ext']); // ".pdf", ".png"
-
-    // ---------- Day 3: Normalization ----------
-    try {
-        $normalizedFiles = [];
-
-        if ($ext === '.pdf') {
-            $normalizedFiles = $this->normalize_pdf_to_images($fullPath, $normalizedPath);
-        } elseif (in_array($ext, ['.jpg', '.jpeg', '.png'])) {
-            $target = $normalizedPath . 'page_1' . $ext;
-            if (!copy($fullPath, $target)) {
-                throw new Exception('Failed to copy image to normalized folder');
-            }
-            $normalizedFiles[] = $target;
-        } else {
-            // DOC/DOCX later
-            echo json_encode([
-                'status'  => 'error',
-                'message' => 'DOC/DOCX normalization not implemented yet. Upload PDF/Image for now.'
-            ]);
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            echo json_encode(['status'=>'error','message'=>'Invalid request method']);
             return;
         }
 
-        // ---------- Prefill (dummy now; later replace with OCR JSON) ----------
-        $prefill = [
-            'invoice_id'     => $invoice_id,
-            'invoice_date'   => date('Y-m-d'),
-            'invoice_time'   => date('H:i'),
-            'due_date'       => date('Y-m-d'),
-            'order_no'       => '',
-            'reference_no'   => '',
-            'employee'       => '',
-            'subject'        => '',
-            'invoice_no'     => '',
-            'customer_code'  => '',
-            'customer_name'  => '',
-            'vat'            => '',
-            'address'        => '',
-            'currency'       => '',
-            'conversion_rate'=> '',
-        ];
-
-        // Build web-preview URLs for normalized images (optional)
-        $webBase = base_url('assets/uploads/invoices/' . $invoice_id . '/normalized/');
-        $previewUrls = [];
-        for ($i=1; $i<=count($normalizedFiles); $i++) {
-            $previewUrls[] = $webBase . 'page_' . $i . '.png';
+        if (empty($_FILES['invoice_file']['name'])) {
+            echo json_encode(['status'=>'error','message'=>'No file selected']);
+            return;
         }
 
+        // Validate mime + size
+        $allowed_mime = [
+            'image/png',
+            'image/jpeg',
+            'application/pdf',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        ];
+
+        $tmp  = $_FILES['invoice_file']['tmp_name'];
+        $mime = function_exists('mime_content_type') ? mime_content_type($tmp) : ($_FILES['invoice_file']['type'] ?? '');
+        $size = (int)($_FILES['invoice_file']['size'] ?? 0);
+
+        if (!in_array($mime, $allowed_mime)) {
+            echo json_encode(['status'=>'error','message'=>'Invalid file type']);
+            return;
+        }
+
+        if ($size > 5 * 1024 * 1024) {
+            echo json_encode(['status'=>'error','message'=>'File must be below 5MB']);
+            return;
+        }
+
+        // Create folders
+        $folderKey = uniqid('inv_'); // folder id (can keep this)
+        $basePath       = FCPATH . 'assets/uploads/invoices/' . $folderKey . '/';
+        $originalPath   = $basePath . 'original/';
+        $normalizedPath = $basePath . 'normalized/';
+
+        if (!is_dir($originalPath) && !mkdir($originalPath, 0777, true)) {
+            echo json_encode(['status'=>'error','message'=>'Cannot create original folder']);
+            return;
+        }
+        if (!is_dir($normalizedPath) && !mkdir($normalizedPath, 0777, true)) {
+            echo json_encode(['status'=>'error','message'=>'Cannot create normalized folder']);
+            return;
+        }
+
+        // Upload
+        $config = [
+            'upload_path'   => $originalPath,
+            'allowed_types' => 'jpg|jpeg|png|pdf|doc|docx',
+            'max_size'      => 5120,
+            'encrypt_name'  => true
+        ];
+        $this->upload->initialize($config);
+
+        if (!$this->upload->do_upload('invoice_file')) {
+            echo json_encode(['status'=>'error','message'=>$this->upload->display_errors('', '')]);
+            return;
+        }
+
+        $up = $this->upload->data();
+        $fullPath = $up['full_path'];
+        $fileName = $up['file_name'];
+        $ext      = strtolower($up['file_ext']); // ".pdf", ".png"
+
+        // Normalize
+        try {
+            $normalizedFiles = [];
+
+            if ($ext === '.pdf') {
+                $normalizedFiles = $this->normalize_pdf_to_images($fullPath, $normalizedPath);
+            } elseif (in_array($ext, ['.jpg', '.jpeg', '.png'])) {
+                $target = $normalizedPath . 'page_1' . $ext;
+                if (!copy($fullPath, $target)) {
+                    throw new Exception('Failed to copy image to normalized folder');
+                }
+                $normalizedFiles[] = $target;
+            } else {
+                echo json_encode(['status'=>'error','message'=>'DOC/DOCX not implemented yet. Upload PDF/Image.']);
+                return;
+            }
+
+            // =======================
+            // INSERT INTO DATABASE
+            // =======================
+            $docData = [
+                'original_file_path' => str_replace(FCPATH, '', $fullPath),
+                'original_file_name' => $fileName,
+                'file_ext'           => ltrim($ext, '.'),
+                'mime_type'          => $mime,
+                'file_size'          => $size,
+                'page_count'         => count($normalizedFiles),
+                'status'             => 'converted',
+                'created_at'         => date('Y-m-d H:i:s'),
+                'updated_at'         => date('Y-m-d H:i:s'),
+            ];
+
+            $document_id = $this->ocr_model->create_document($docData);
+
+            if (!$document_id) {
+                echo json_encode([
+                    'status'   => 'error',
+                    'message'  => 'Failed to insert into invoice_documents',
+                    'db_error' => $this->db->error()
+                ]);
+                return;
+            }
+
+            $rows = [];
+            $now = date('Y-m-d H:i:s');
+            $pageNo = 1;
+
+            foreach ($normalizedFiles as $imgPath) {
+                $rows[] = [
+                    'document_id' => $document_id,
+                    'page_no'     => $pageNo,
+                    'image_path'  => str_replace(FCPATH, '', $imgPath),
+                    'ocr_text'    => null,
+                    'ocr_confidence' => null,
+                    'created_at'  => $now,
+                ];
+                $pageNo++;
+            }
+
+            $this->ocr_model->create_pages_batch($rows);
+
+            // Prefill dummy (later from OCR)
+            $prefill = [
+                'invoice_date' => date('Y-m-d'),
+                'invoice_time' => date('H:i'),
+                'due_date'     => date('Y-m-d')
+            ];
+
+            // preview urls
+            $webBase = base_url('assets/uploads/invoices/' . $folderKey . '/normalized/');
+            $previewUrls = [];
+            for ($i = 1; $i <= count($normalizedFiles); $i++) {
+                $previewUrls[] = $webBase . 'page_' . $i . '.png';
+            }
+
+            echo json_encode([
+                'status'           => 'success',
+                'message'          => 'Uploaded & normalized successfully',
+                'document_id'      => $document_id,
+                'prefill'          => $prefill,
+                'uploaded_file'    => $fileName,
+                'normalized_pages' => count($normalizedFiles),
+                'preview_urls'     => $previewUrls
+            ]);
+            return;
+
+        } catch (Exception $e) {
+            echo json_encode(['status'=>'error','message'=>'Normalization failed: '.$e->getMessage()]);
+            return;
+        }
+    }
+
+    // -----------------------------
+    // PDF helpers
+    // -----------------------------
+    private function pdf_to_png_pdftoppm($pdfPath, $outputDir)
+    {
+        if (!is_dir($outputDir) && !mkdir($outputDir, 0777, true)) {
+            throw new Exception('Cannot create output directory: ' . $outputDir);
+        }
+
+        $prefix = rtrim($outputDir, '/\\') . DIRECTORY_SEPARATOR . 'page';
+
+        $cmd = 'pdftoppm -png -r 300 '
+            . escapeshellarg($pdfPath) . ' '
+            . escapeshellarg($prefix);
+
+        $out = [];
+        $code = 0;
+        exec($cmd . ' 2>&1', $out, $code);
+
+        if ($code !== 0) {
+            throw new Exception('pdftoppm failed: ' . implode("\n", $out));
+        }
+
+        $files = glob($outputDir . DIRECTORY_SEPARATOR . 'page-*.png');
+        if (!$files) {
+            throw new Exception('pdftoppm produced no PNG files');
+        }
+
+        natsort($files);
+
+        $renamed = [];
+        $i = 1;
+        foreach ($files as $f) {
+            $new = $outputDir . DIRECTORY_SEPARATOR . "page_{$i}.png";
+            @rename($f, $new);
+            $renamed[] = $new;
+            $i++;
+        }
+
+        return $renamed;
+    }
+
+    private function normalize_pdf_to_images($pdfPath, $outputDir)
+    {
+        if ($this->command_exists('pdftoppm')) {
+            return $this->pdf_to_png_pdftoppm($pdfPath, $outputDir);
+        }
+
+        throw new Exception('pdftoppm not found. Install Poppler (pdftoppm) or add Ghostscript conversion.');
+    }
+
+    private function command_exists($cmd)
+    {
+        $out = [];
+        $code = 0;
+
+        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+            exec("where $cmd 2>NUL", $out, $code);
+        } else {
+            exec("command -v " . escapeshellarg($cmd) . " 2>/dev/null", $out, $code);
+        }
+
+        return ($code === 0 && !empty($out));
+    }
+
+private function preprocess_image_for_ocr($imagePath)
+{
+    if (!file_exists($imagePath)) {
+        throw new Exception("Image not found: " . $imagePath);
+    }
+
+    $img = new Imagick();
+    $img->readImage($imagePath);
+
+    // ✅ Flatten (important for screenshots)
+    $img->setImageBackgroundColor('white');
+    $img = $img->mergeImageLayers(Imagick::LAYERMETHOD_FLATTEN);
+
+    // ✅ Convert to grayscale
+    $img->setImageColorspace(Imagick::COLORSPACE_GRAY);
+
+    // ✅ Increase resolution (screenshots are low DPI)
+    $w = $img->getImageWidth();
+    $h = $img->getImageHeight();
+    $img->resizeImage($w * 2, $h * 2, Imagick::FILTER_LANCZOS, 1);
+
+    // ✅ Improve contrast
+    $img->normalizeImage();
+    $img->contrastImage(1);
+
+    // ✅ Slight blur to reduce noise (safe alternative)
+    $img->blurImage(1, 0.5);
+
+    // ✅ Sharpen text (safe)
+    $img->sharpenImage(1, 0.5);
+
+    // ✅ Force 300 DPI
+    $img->setImageResolution(300, 300);
+    $img->resampleImage(300, 300, Imagick::FILTER_LANCZOS, 1);
+
+    // ✅ Ensure PNG output
+    $img->setImageFormat('png');
+    $img->writeImage($imagePath);
+
+    $img->clear();
+    $img->destroy();
+}
+
+
+    ///OCR PROCESSING
+public function run_ocr()
+{
+      @header('Content-Type: application/json; charset=utf-8');
+    @ini_set('display_errors', 0);
+    @error_reporting(E_ALL);
+
+    register_shutdown_function(function () {
+        $err = error_get_last();
+        if ($err && in_array($err['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+            echo json_encode([
+                'status' => 'error',
+                'message' => 'PHP fatal error',
+                'error' => $err['message'],
+                'file' => $err['file'],
+                'line' => $err['line'],
+            ]);
+        }
+    });
+
+    set_exception_handler(function ($e) {
         echo json_encode([
-            'status'          => 'success',
-            'message'         => 'Uploaded & normalized successfully',
-            'prefill'         => $prefill,
-            'uploaded_file'   => $fileName,
-            'normalized_pages'=> count($normalizedFiles),
-            'preview_urls'    => $previewUrls
+            'status' => 'error',
+            'message' => 'Unhandled exception',
+            'error' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+        ]);
+        exit;
+    });
+
+    set_error_handler(function ($severity, $message, $file, $line) {
+        throw new ErrorException($message, 0, $severity, $file, $line);
+    });
+    try {
+
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            echo json_encode(['status'=>'error','message'=>'Invalid request method']);
+            return;
+        }
+
+        $document_id = $this->input->post('document_id');
+        if (!$document_id) {
+            echo json_encode(['status'=>'error','message'=>'document_id is required']);
+            return;
+        }
+
+        $pages = $this->ocr_model->get_pages($document_id);
+        if (empty($pages)) {
+            echo json_encode(['status'=>'error','message'=>'No pages found for this document']);
+            return;
+        }
+
+        // tmp folder
+        $tmpDir = FCPATH . 'assets/uploads/tmp/';
+        if (!is_dir($tmpDir)) {
+            mkdir($tmpDir, 0777, true);
+        }
+
+        // tesseract path
+        $tesseract = '"C:\Program Files\Tesseract-OCR\tesseract.exe"';
+
+        // languages
+        $lang = 'eng+ara';
+        $psm  = 6;
+        $oem  = 1;
+
+        $this->ocr_model->update_document_status($document_id, 'ocr_running');
+
+        $done = 0;
+        $errors = [];
+
+        foreach ($pages as $p) {
+
+            $imgRel = ltrim($p['image_path'], '/\\');
+            $imgAbs = FCPATH . $imgRel;
+
+            if (!file_exists($imgAbs)) {
+                $errors[] = "Missing image page {$p['page_no']}: $imgAbs";
+                continue;
+            }
+
+            // preprocess
+            $this->preprocess_image_for_ocr($imgAbs);
+
+            $tmpBase = $tmpDir . 'ocr_' . $document_id . '_' . $p['page_no'];
+
+            // ✅ TEXT output (no "tsv" at end)
+            $cmd = $tesseract . ' '
+                . escapeshellarg($imgAbs) . ' '
+                . escapeshellarg($tmpBase)
+                . ' -l ' . escapeshellarg($lang)
+                . ' --oem ' . $oem
+                . ' --psm ' . $psm;
+
+            $out = [];
+            $code = 0;
+            exec($cmd . ' 2>&1', $out, $code);
+
+            if ($code !== 0) {
+                $errors[] = "Tesseract failed page {$p['page_no']}: " . implode(" | ", $out);
+                continue;
+            }
+
+            $txtFile = $tmpBase . '.txt';
+            if (!file_exists($txtFile)) {
+                $errors[] = "TXT not created page {$p['page_no']} (expected $txtFile)";
+                continue;
+            }
+
+            $ocrText = trim(file_get_contents($txtFile));
+
+            // ✅ Save to DB
+            $ok = $this->ocr_model->update_page_ocr($document_id, $p['page_no'], $ocrText, null);
+            if (!$ok) {
+                $errors[] = "DB update failed page {$p['page_no']}";
+                continue;
+            }
+
+            $done++;
+        }
+
+        $this->ocr_model->update_document_status($document_id, ($done > 0 ? 'ocr_done' : 'ocr_failed'));
+
+        echo json_encode([
+            'status' => ($done > 0 ? 'success' : 'error'),
+            'message' => "OCR finished. Saved: {$done}/" . count($pages),
+            'document_id' => $document_id,
+            'processed_pages' => $done,
+            'total_pages' => count($pages),
+            'errors' => $errors
         ]);
         return;
 
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         echo json_encode([
-            'status'  => 'error',
-            'message' => 'Normalization failed: ' . $e->getMessage()
+            'status'=>'error',
+            'message'=>'OCR crashed',
+            'error'=>$e->getMessage(),
+            'file'=>$e->getFile(),
+            'line'=>$e->getLine()
         ]);
         return;
     }
 }
 
-/**
- * PDF -> PNG pages using Imagick (300 DPI)
- * Returns an array of absolute file paths of created images.
- */
-
-
-private function pdf_to_png_pdftoppm($pdfPath, $outputDir)
-{
-    if (!is_dir($outputDir) && !mkdir($outputDir, 0777, true)) {
-        throw new Exception('Cannot create output directory: ' . $outputDir);
-    }
-
-    // pdftoppm output uses page-1.png, page-2.png
-    $prefix = rtrim($outputDir, '/\\') . DIRECTORY_SEPARATOR . 'page';
-
-    $cmd = 'pdftoppm -png -r 300 '
-        . escapeshellarg($pdfPath) . ' '
-        . escapeshellarg($prefix);
-
-    $out = [];
-    $code = 0;
-    exec($cmd . ' 2>&1', $out, $code);
-
-    if ($code !== 0) {
-        throw new Exception('pdftoppm failed: ' . implode("\n", $out));
-    }
-
-    $files = glob($outputDir . DIRECTORY_SEPARATOR . 'page-*.png');
-    if (!$files) {
-        throw new Exception('pdftoppm produced no PNG files');
-    }
-
-    natsort($files);
-
-    // Rename to page_1.png, page_2.png ...
-    $renamed = [];
-    $i = 1;
-    foreach ($files as $f) {
-        $new = $outputDir . DIRECTORY_SEPARATOR . "page_{$i}.png";
-        @rename($f, $new);
-        $renamed[] = $new;
-        $i++;
-    }
-
-    return $renamed;
 }
-
-private function normalize_pdf_to_images($pdfPath, $outputDir)
-{
-    // Best: Poppler if available (cloud)
-    if ($this->command_exists('pdftoppm')) {
-        return $this->pdf_to_png_pdftoppm($pdfPath, $outputDir);
-    }
-
-    // Windows Ghostscript exe name
-    if ($this->command_exists('gswin64c')) {
-        return $this->pdf_to_png_imagick($pdfPath, $outputDir);
-    }
-
-    // Linux/mac Ghostscript
-    if ($this->command_exists('gs')) {
-        return $this->pdf_to_png_imagick($pdfPath, $outputDir);
-    }
-
-    throw new Exception('No PDF renderer available. Install poppler (pdftoppm) or ghostscript (gs/gswin64c).');
-}
-
-
-private function command_exists($cmd)
-{
-    $out = [];
-    $code = 0;
-
-    if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-        exec("where $cmd 2>NUL", $out, $code);
-    } else {
-        exec("command -v " . escapeshellarg($cmd) . " 2>/dev/null", $out, $code);
-    }
-
-    return ($code === 0 && !empty($out));
-}
-
-
-}
-
-
-
-
-
-

@@ -131,7 +131,7 @@ small{font-size:12px;color:#6b7280;line-height:1.6}
   <div class="col">
     <label>Employee</label>
     <select name="employee">
-      <option >select employee</option>
+      <option value="">select employee</option>
     </select>
   </div>
 </div>
@@ -198,10 +198,6 @@ small{font-size:12px;color:#6b7280;line-height:1.6}
   <p><strong>Customer :</strong> <?= htmlspecialchars($prefill['customer_name'] ?? ''); ?></p>
   <p><strong>VAT :</strong> <?= htmlspecialchars($prefill['vat'] ?? ''); ?></p>
   <p><strong>Address :</strong> <?= htmlspecialchars($prefill['address'] ?? ''); ?></p>
-  <?php if (!empty($prefill['invoice_id'])): ?>
-    <p><strong>OCR Invoice ID :</strong> <?= htmlspecialchars($prefill['invoice_id']); ?></p>
-    <p><strong>Normalized Pages :</strong> <?= htmlspecialchars($prefill['normalized_pages'] ?? ''); ?></p>
-  <?php endif; ?>
 </div>
 
 <!-- CURRENCY -->
@@ -228,7 +224,6 @@ small{font-size:12px;color:#6b7280;line-height:1.6}
 
 </div>
 
-<!-- jQuery (use your local copy if already included in template) -->
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 
 <script>
@@ -251,7 +246,7 @@ $(function(){
     }
   });
 
-  // Prevent default form submit (important: avoid routing)
+  // Prevent default form submit
   $('#ocrForm').on('submit', function(e){
     e.preventDefault();
   });
@@ -267,6 +262,7 @@ $(function(){
     }
 
     const f = fileInput.files[0];
+
     const allowed = [
       'image/png',
       'image/jpeg',
@@ -293,22 +289,48 @@ $(function(){
       data: formData,
       processData: false,
       contentType: false,
-      dataType: 'json', // ✅ IMPORTANT
+      dataType: 'json',
       success: function(res){
 
         if(res.status === 'success'){
+
+          // ✅ IMPORTANT: store document_id for final save
+          if(res.document_id){
+            $('#document_id').val(res.document_id);
+          }
+          // ✅ Start OCR immediately after upload
+$.ajax({
+  url: '<?= site_url("home/run_ocr") ?>',
+  type: 'POST',
+  dataType: 'json',
+  data: { document_id: res.document_id },
+  success: function(ocrRes){
+    if(ocrRes.status === 'success'){
+      alert(ocrRes.message);
+      // Next step: fetch OCR text + prefill (we’ll do after this)
+    } else {
+      alert(ocrRes.message || 'OCR failed');
+    }
+  },
+  error: function(xhr){
+    alert('OCR server error. HTTP: ' + xhr.status);
+  }
+});
+          // ✅ Prefill fields
+
           if(res.prefill){
             $('input[name="invoice_date"]').val(res.prefill.invoice_date || '');
             $('input[name="invoice_time"]').val(res.prefill.invoice_time || '');
             $('input[name="due_date"]').val(res.prefill.due_date || '');
             $('input[name="order_no"]').val(res.prefill.order_no || '');
             $('input[name="reference_no"]').val(res.prefill.reference_no || '');
-            $('input[name="employee"]').val(res.prefill.employee || '');
+            $('select[name="employee"]').val(res.prefill.employee || '');
             $('textarea[name="subject"]').val(res.prefill.subject || '');
           }
 
           alert(res.message || 'OCR completed');
           $('#uploadModal').hide();
+
         } else {
           alert(res.message || 'OCR failed');
         }
@@ -322,7 +344,6 @@ $(function(){
 
 });
 </script>
-
 
 </body>
 </html>
