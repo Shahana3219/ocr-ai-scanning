@@ -23,11 +23,13 @@ class Ocr_model extends CI_Model {
     {
         $this->db->where('document_id', $document_id);
         $this->db->where('page_no', $page_no);
-        return $this->db->update($this->tbl_pages, [
+        $update_data = [
             'ocr_text'       => $ocr_text,
             'ocr_confidence' => $ocr_confidence,
             'updated_at'     => date('Y-m-d H:i:s')
-        ]);
+        ];
+        $result = $this->db->update($this->tbl_pages, $update_data);
+        return ($this->db->affected_rows() > 0);
     }
 
     public function update_document_status($document_id, $status)
@@ -37,6 +39,31 @@ class Ocr_model extends CI_Model {
             'status'     => $status,
             'updated_at' => date('Y-m-d H:i:s')
         ]);
+    }
+
+    public function create_document($data)
+    {
+        if ($this->db->insert($this->tbl_docs, $data)) {
+            $id = $this->db->insert_id();
+            return ($id > 0) ? $id : false;
+        }
+        return false;
+    }
+
+    public function create_pages_batch($rows)
+    {
+        if (empty($rows)) {
+            return false;
+        }
+        $result = $this->db->insert_batch($this->tbl_pages, $rows);
+        return ($result !== false);
+    }
+
+    public function get_document($document_id)
+    {
+        return $this->db
+            ->get_where($this->tbl_docs, ['id' => $document_id])
+            ->row_array();
     }
     
 

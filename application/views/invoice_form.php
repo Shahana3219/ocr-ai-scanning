@@ -312,9 +312,11 @@ $.ajax({
       alert(ocrRes.message || 'OCR failed');
     }
   },
-  error: function(xhr){
-    alert('OCR server error. HTTP: ' + xhr.status);
-  }
+ error: function(xhr){
+  console.log(xhr.responseText); // ✅ view real output
+  alert('OCR server error. HTTP: ' + xhr.status + '\n\n' + xhr.responseText.slice(0,300));
+}
+
 });
           // ✅ Prefill fields
 

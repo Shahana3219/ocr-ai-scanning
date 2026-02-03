@@ -147,11 +147,20 @@ class Home extends CI_Controller
                     'ocr_text'    => null,
                     'ocr_confidence' => null,
                     'created_at'  => $now,
+                    'updated_at'  => $now,
                 ];
                 $pageNo++;
             }
 
-            $this->ocr_model->create_pages_batch($rows);
+            $pagesInserted = $this->ocr_model->create_pages_batch($rows);
+            if (!$pagesInserted) {
+                echo json_encode([
+                    'status'   => 'error',
+                    'message'  => 'Failed to insert pages into invoice_document_pages',
+                    'db_error' => $this->db->error()
+                ]);
+                return;
+            }
 
             // Prefill dummy (later from OCR)
             $prefill = [
@@ -162,10 +171,11 @@ class Home extends CI_Controller
 
             // preview urls
             $webBase = base_url('assets/uploads/invoices/' . $folderKey . '/normalized/');
-            $previewUrls = [];
-            for ($i = 1; $i <= count($normalizedFiles); $i++) {
-                $previewUrls[] = $webBase . 'page_' . $i . '.png';
-            }
+           $previewUrls = [];
+foreach ($normalizedFiles as $imgPath) {
+    $previewUrls[] = base_url(str_replace(FCPATH, '', $imgPath));
+}
+
 
             echo json_encode([
                 'status'           => 'success',
@@ -226,14 +236,16 @@ class Home extends CI_Controller
         return $renamed;
     }
 
-    private function normalize_pdf_to_images($pdfPath, $outputDir)
-    {
-        if ($this->command_exists('pdftoppm')) {
-            return $this->pdf_to_png_pdftoppm($pdfPath, $outputDir);
-        }
-
-        throw new Exception('pdftoppm not found. Install Poppler (pdftoppm) or add Ghostscript conversion.');
+ private function normalize_pdf_to_images($pdfPath, $outputDir)
+{
+    if ($this->command_exists('pdftoppm')) {
+        return $this->pdf_to_png_pdftoppm($pdfPath, $outputDir);
     }
+
+    // ✅ Windows fallback: Ghostscript
+    return $this->pdf_to_png_ghostscript($pdfPath, $outputDir);
+}
+
 
     private function command_exists($cmd)
     {
@@ -248,43 +260,40 @@ class Home extends CI_Controller
 
         return ($code === 0 && !empty($out));
     }
-
 private function preprocess_image_for_ocr($imagePath)
 {
     if (!file_exists($imagePath)) {
         throw new Exception("Image not found: " . $imagePath);
     }
 
-    $img = new Imagick();
-    $img->readImage($imagePath);
+    // ✅ if Imagick not enabled, do nothing (DON'T CRASH)
+    if (!extension_loaded('imagick')) {
+        return;
+    }
 
-    // ✅ Flatten (important for screenshots)
+    $img = new Imagick();
+    if (!$img->readImage($imagePath)) {
+        throw new Exception("Imagick cannot read image: " . $imagePath);
+    }
+
     $img->setImageBackgroundColor('white');
     $img = $img->mergeImageLayers(Imagick::LAYERMETHOD_FLATTEN);
 
-    // ✅ Convert to grayscale
     $img->setImageColorspace(Imagick::COLORSPACE_GRAY);
 
-    // ✅ Increase resolution (screenshots are low DPI)
     $w = $img->getImageWidth();
     $h = $img->getImageHeight();
     $img->resizeImage($w * 2, $h * 2, Imagick::FILTER_LANCZOS, 1);
 
-    // ✅ Improve contrast
     $img->normalizeImage();
     $img->contrastImage(1);
 
-    // ✅ Slight blur to reduce noise (safe alternative)
     $img->blurImage(1, 0.5);
-
-    // ✅ Sharpen text (safe)
     $img->sharpenImage(1, 0.5);
 
-    // ✅ Force 300 DPI
     $img->setImageResolution(300, 300);
     $img->resampleImage(300, 300, Imagick::FILTER_LANCZOS, 1);
 
-    // ✅ Ensure PNG output
     $img->setImageFormat('png');
     $img->writeImage($imagePath);
 
@@ -293,40 +302,18 @@ private function preprocess_image_for_ocr($imagePath)
 }
 
 
-    ///OCR PROCESSING
+
 public function run_ocr()
 {
-      @header('Content-Type: application/json; charset=utf-8');
-    @ini_set('display_errors', 0);
-    @error_reporting(E_ALL);
+    header('Content-Type: application/json; charset=utf-8');
 
-    register_shutdown_function(function () {
-        $err = error_get_last();
-        if ($err && in_array($err['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
-            echo json_encode([
-                'status' => 'error',
-                'message' => 'PHP fatal error',
-                'error' => $err['message'],
-                'file' => $err['file'],
-                'line' => $err['line'],
-            ]);
-        }
-    });
+    ini_set('display_errors', 1);
+    error_reporting(E_ALL);
 
-    set_exception_handler(function ($e) {
-        echo json_encode([
-            'status' => 'error',
-            'message' => 'Unhandled exception',
-            'error' => $e->getMessage(),
-            'file' => $e->getFile(),
-            'line' => $e->getLine(),
-        ]);
-        exit;
-    });
-
-    set_error_handler(function ($severity, $message, $file, $line) {
+    set_error_handler(function($severity,$message,$file,$line){
         throw new ErrorException($message, 0, $severity, $file, $line);
     });
+
     try {
 
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -408,7 +395,7 @@ public function run_ocr()
             // ✅ Save to DB
             $ok = $this->ocr_model->update_page_ocr($document_id, $p['page_no'], $ocrText, null);
             if (!$ok) {
-                $errors[] = "DB update failed page {$p['page_no']}";
+                $errors[] = "DB update failed page {$p['page_no']}: " . $this->db->error();
                 continue;
             }
 
@@ -438,5 +425,6 @@ public function run_ocr()
         return;
     }
 }
+
 
 }
