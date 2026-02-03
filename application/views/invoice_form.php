@@ -229,50 +229,41 @@ small{font-size:12px;color:#6b7280;line-height:1.6}
 <script>
 $(function(){
 
-  // OPEN MODAL
+  // ===== MODAL CONTROLS =====
   $('#btnOpenModal').on('click', function () {
     $('#uploadModal').css('display', 'flex');
   });
 
-  // CLOSE MODAL (X button)
   $('#btnCloseModal').on('click', function () {
     $('#uploadModal').hide();
   });
 
-  // CLOSE MODAL when clicking outside modal-content
   $('#uploadModal').on('click', function(e){
     if (e.target.id === 'uploadModal') {
       $('#uploadModal').hide();
     }
   });
 
-  // Prevent default form submit
   $('#ocrForm').on('submit', function(e){
     e.preventDefault();
   });
 
-  // Continue -> AJAX upload
+  // ===== UPLOAD + OCR BUTTON =====
   $('#btnContinueOCR').on('click', function(){
-
     const fileInput = $('#invoice_file')[0];
-
+    
     if(!fileInput.files.length){
       alert('Please select a file');
       return;
     }
 
     const f = fileInput.files[0];
+    const allowed = ['image/png', 'image/jpeg', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    const ext = (f.name.split('.').pop() || '').toLowerCase();
+    const allowedExt = ['png','jpg','jpeg','pdf','doc','docx'];
 
-    const allowed = [
-      'image/png',
-      'image/jpeg',
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    ];
-
-    if($.inArray(f.type, allowed) === -1){
-      alert('Invalid file type');
+    if($.inArray(f.type, allowed) === -1 && $.inArray(ext, allowedExt) === -1){
+      alert('Invalid file type. Allowed: PNG, JPG, PDF, DOC, DOCX');
       return;
     }
 
@@ -280,6 +271,9 @@ $(function(){
       alert('File must be below 5MB');
       return;
     }
+
+    // Disable button while processing
+    $('#btnContinueOCR').prop('disabled', true).text('Uploading...');
 
     const formData = new FormData($('#ocrForm')[0]);
 
@@ -291,57 +285,52 @@ $(function(){
       contentType: false,
       dataType: 'json',
       success: function(res){
-
         if(res.status === 'success'){
-
-          // ✅ IMPORTANT: store document_id for final save
-          if(res.document_id){
-            $('#document_id').val(res.document_id);
-          }
-          // ✅ Start OCR immediately after upload
-$.ajax({
-  url: '<?= site_url("home/run_ocr") ?>',
-  type: 'POST',
-  dataType: 'json',
-  data: { document_id: res.document_id },
-  success: function(ocrRes){
-    if(ocrRes.status === 'success'){
-      alert(ocrRes.message);
-      // Next step: fetch OCR text + prefill (we’ll do after this)
-    } else {
-      alert(ocrRes.message || 'OCR failed');
-    }
-  },
- error: function(xhr){
-  console.log(xhr.responseText); // ✅ view real output
-  alert('OCR server error. HTTP: ' + xhr.status + '\n\n' + xhr.responseText.slice(0,300));
-}
-
-});
-          // ✅ Prefill fields
-
-          if(res.prefill){
-            $('input[name="invoice_date"]').val(res.prefill.invoice_date || '');
-            $('input[name="invoice_time"]').val(res.prefill.invoice_time || '');
-            $('input[name="due_date"]').val(res.prefill.due_date || '');
-            $('input[name="order_no"]').val(res.prefill.order_no || '');
-            $('input[name="reference_no"]').val(res.prefill.reference_no || '');
-            $('select[name="employee"]').val(res.prefill.employee || '');
-            $('textarea[name="subject"]').val(res.prefill.subject || '');
-          }
-
-          alert(res.message || 'OCR completed');
-          $('#uploadModal').hide();
-
+          $('#document_id').val(res.document_id);
+          
+          // Start OCR processing
+          $.ajax({
+            url: '<?= site_url("home/run_ocr") ?>',
+            type: 'POST',
+            dataType: 'json',
+            data: { document_id: res.document_id },
+            success: function(ocrRes){
+              $('#btnContinueOCR').prop('disabled', false).text('Continue');
+              
+              if(ocrRes.status === 'success'){
+                // Fill form with prefilled data
+                if(ocrRes.prefill){
+                  $('input[name="invoice_date"]').val(ocrRes.prefill.invoice_date || '');
+                  $('input[name="invoice_time"]').val(ocrRes.prefill.invoice_time || '');
+                  $('input[name="due_date"]').val(ocrRes.prefill.due_date || '');
+                  $('input[name="order_no"]').val(ocrRes.prefill.order_no || '');
+                  $('input[name="reference_no"]').val(ocrRes.prefill.reference_no || '');
+                  $('textarea[name="subject"]').val(ocrRes.prefill.subject || '');
+                }
+                
+                alert('✓ Upload & OCR completed!\n' + (ocrRes.message || ''));
+                $('#uploadModal').hide();
+              } else {
+                alert('OCR failed: ' + (ocrRes.message || 'Unknown error'));
+              }
+            },
+            error: function(xhr){
+              $('#btnContinueOCR').prop('disabled', false).text('Continue');
+              console.error('OCR error:', xhr.responseText);
+              alert('OCR processing failed. Check console for details.');
+            }
+          });
         } else {
-          alert(res.message || 'OCR failed');
+          $('#btnContinueOCR').prop('disabled', false).text('Continue');
+          alert('Upload failed: ' + (res.message || 'Unknown error'));
         }
       },
       error: function(xhr){
-        alert('Server error during OCR. HTTP: ' + xhr.status);
+        $('#btnContinueOCR').prop('disabled', false).text('Continue');
+        console.error('Upload error:', xhr.responseText);
+        alert('Server error during upload. HTTP: ' + xhr.status);
       }
     });
-
   });
 
 });

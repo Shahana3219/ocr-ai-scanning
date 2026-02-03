@@ -260,6 +260,160 @@ foreach ($normalizedFiles as $imgPath) {
 
         return ($code === 0 && !empty($out));
     }
+    private function parse_invoice_from_text($text)
+{
+    // Normalize spaces/newlines
+    $t = preg_replace("/[ \t]+/", " ", $text);
+    $t = preg_replace("/\r\n|\r/", "\n", $t);
+
+    $out = [
+        'invoice_no' => '',
+        'invoice_date' => '',
+        'due_date' => '',
+        'customer_name' => '',
+        'vat_no' => '',
+        'address' => '',
+        'sales_person' => '',
+        'items' => [],
+        'totals' => [
+            'total_without_vat' => '',
+            'total_vat' => '',
+            'total_with_vat' => '',
+            'discount' => ''
+        ],
+        'bank' => [
+            'account_name' => '',
+            'bank_name' => '',
+            'account_number' => '',
+            'iban' => ''
+        ]
+    ];
+
+    // ---------- Header fields ----------
+    if (preg_match('/Customer Name\s+(.+?)(?:\n|Invoice|No)/i', $t, $m)) {
+        $out['customer_name'] = trim($m[1]);
+    }
+
+    if (preg_match('/Invoice\s*No\s*[:\-]?\s*([A-Za-z0-9\-\/]+)/i', $t, $m) ||
+        preg_match('/No\s*Invoice\s*([A-Za-z0-9\-\/]+)/i', $t, $m)) {
+        $out['invoice_no'] = trim($m[1]);
+    }
+
+    // Dates like 17-Jan-2026 / 20-Jan-2026
+    if (preg_match('/Invoice\s*Date\s*[:\-]?\s*([0-9]{1,2}\-[A-Za-z]{3}\-[0-9]{4})/i', $t, $m)) {
+        $out['invoice_date'] = trim($m[1]);
+    }
+    if (preg_match('/Due\s*Date\s*[:\-]?\s*([0-9]{1,2}\-[A-Za-z]{3}\-[0-9]{4})/i', $t, $m) ||
+        preg_match('/Date\s*Due.*?([0-9]{1,2}\-[A-Za-z]{3}\-[0-9]{4})/i', $t, $m)) {
+        $out['due_date'] = trim($m[1]);
+    }
+
+    if (preg_match('/VAT\s*NO\s*[:\-]?\s*([0-9]{6,})/i', $t, $m) ||
+        preg_match('/NO\s*VAT\s*([0-9]{6,})/i', $t, $m)) {
+        $out['vat_no'] = trim($m[1]);
+    }
+
+    if (preg_match('/Sales\s*Person\s*[:\-]?\s*([A-Za-z0-9_ ]+)/i', $t, $m)) {
+        $out['sales_person'] = trim($m[1]);
+    }
+
+    // Address block (simple heuristic)
+    if (preg_match('/Customer\'?s\s*Address\s*(.+?)(?:ZIP\/Postal|Payment Terms|VAT NO)/is', $t, $m)) {
+        $out['address'] = trim(preg_replace("/\n+/", " ", $m[1]));
+    }
+
+    // ---------- Totals ----------
+    if (preg_match('/Total\s*Without\s*VAT\s*[^0-9]*([\d,]+\.\d{2})/i', $t, $m)) {
+        $out['totals']['total_without_vat'] = $m[1];
+    }
+    if (preg_match('/Discount\s*[^0-9]*([\d,]+\.\d{2})/i', $t, $m)) {
+        $out['totals']['discount'] = $m[1];
+    }
+    if (preg_match('/Total\s*VAT\s*[^0-9]*([\d,]+\.\d{2})/i', $t, $m) ||
+        preg_match('/VAT\s*Total\s*15%\s*[^0-9]*([\d,]+\.\d{2})/i', $t, $m)) {
+        $out['totals']['total_vat'] = $m[1];
+    }
+    if (preg_match('/Total\s*With\s*VAT.*?([\d,]+\.\d{2})/i', $t, $m) ||
+        preg_match('/Total\s*inc\.\s*VAT.*?([\d,]+\.\d{2})/i', $t, $m)) {
+        $out['totals']['total_with_vat'] = $m[1];
+    }
+
+    // ---------- Bank ----------
+    if (preg_match('/Account\s*Name\s*([^\n]+)/i', $t, $m)) {
+        $out['bank']['account_name'] = trim($m[1]);
+    }
+    if (preg_match('/Bank\s*Name\s*([^\n]+)/i', $t, $m)) {
+        $out['bank']['bank_name'] = trim($m[1]);
+    }
+    if (preg_match('/Account\s*Number\s*([A-Za-z0-9]+)/i', $t, $m)) {
+        $out['bank']['account_number'] = trim($m[1]);
+    }
+    if (preg_match('/IBAN\s*No\s*([A-Za-z0-9]+)/i', $t, $m) ||
+        preg_match('/IBAN\s*([A-Za-z0-9]{6,})/i', $t, $m)) {
+        $out['bank']['iban'] = trim($m[1]);
+    }
+
+    // ---------- Items (robust line parsing) ----------
+    // Works for the row like: PI01168 MUG SET ... Unit BOX ... Price 70.00 ... Without VAT 5,999.70 ... VAT Amount 899.96 ... Total inc. VAT 6,899.66
+    // We'll capture:
+    // code, desc, qty, unit, price, without_vat, vat_amount, total_inc_vat
+    $lines = preg_split("/\n/", $t);
+    foreach ($lines as $ln) {
+        $ln = trim($ln);
+        if ($ln === '') continue;
+
+        // Match item code + description
+        if (preg_match('/\b([A-Z]{1,4}\d{3,})\b\s+(.+?)\s+(\d{1,6})\s+(BOX|PCS|PC|EA|UNIT|CTN|PACK)\b/i', $ln, $m)) {
+            $code = $m[1];
+            $desc = trim($m[2]);
+            $qty  = $m[3];
+            $unit = strtoupper($m[4]);
+
+            // Try to find amounts in same line (some invoices place them earlier/later)
+            preg_match_all('/([\d,]+\.\d{2})/', $ln, $nums);
+            $nums = $nums[1] ?? [];
+
+            // Heuristic for this invoice format:
+            // Price, Without VAT, VAT Amount, Total inc VAT appear as 4 decimal numbers.
+            $price = $nums[0] ?? '';
+            $without = $nums[1] ?? '';
+            $vatAmt = $nums[2] ?? '';
+            $total = $nums[3] ?? end($nums);
+
+            $out['items'][] = [
+                'item_code' => $code,
+                'description' => $desc,
+                'qty' => $qty,
+                'unit' => $unit,
+                'unit_price' => $price,
+                'without_vat' => $without,
+                'vat_amount' => $vatAmt,
+                'total_inc_vat' => $total
+            ];
+        }
+
+        // Fallback for your sample where qty/unit appear elsewhere:
+        // PI01168 MUG SET ... BOX 100 ...
+        if (empty($out['items']) && preg_match('/\b(PI\d{5})\b\s+(.+?)\s+.*?\b(BOX|PCS|PC|EA)\b\s+(\d{1,6})/i', $ln, $m2)) {
+            preg_match_all('/([\d,]+\.\d{2})/', $ln, $nums2);
+            $nums2 = $nums2[1] ?? [];
+
+            $out['items'][] = [
+                'item_code' => $m2[1],
+                'description' => trim($m2[2]),
+                'qty' => $m2[4],
+                'unit' => strtoupper($m2[3]),
+                'unit_price' => $nums2[0] ?? '',
+                'without_vat' => $nums2[1] ?? '',
+                'vat_amount' => $nums2[2] ?? '',
+                'total_inc_vat' => $nums2[3] ?? (end($nums2) ?: '')
+            ];
+        }
+    }
+
+    return $out;
+}
+
 private function preprocess_image_for_ocr($imagePath)
 {
     if (!file_exists($imagePath)) {
@@ -343,7 +497,7 @@ public function run_ocr()
         $tesseract = '"C:\Program Files\Tesseract-OCR\tesseract.exe"';
 
         // languages
-        $lang = 'eng+ara';
+        $lang = 'eng';
         $psm  = 6;
         $oem  = 1;
 
@@ -351,6 +505,15 @@ public function run_ocr()
 
         $done = 0;
         $errors = [];
+        // Combine all OCR text from DB pages (more reliable than tmp files)
+$allText = '';
+$pages2 = $this->ocr_model->get_pages($document_id);
+foreach ($pages2 as $pp) {
+    $allText .= "\n\n" . ($pp['ocr_text'] ?? '');
+}
+
+$parsed = $this->parse_invoice_from_text($allText);
+
 
         foreach ($pages as $p) {
 
@@ -404,15 +567,26 @@ public function run_ocr()
 
         $this->ocr_model->update_document_status($document_id, ($done > 0 ? 'ocr_done' : 'ocr_failed'));
 
-        echo json_encode([
-            'status' => ($done > 0 ? 'success' : 'error'),
-            'message' => "OCR finished. Saved: {$done}/" . count($pages),
-            'document_id' => $document_id,
-            'processed_pages' => $done,
-            'total_pages' => count($pages),
-            'errors' => $errors
-        ]);
-        return;
+     echo json_encode([
+    'status' => ($done > 0 ? 'success' : 'error'),
+    'message' => "OCR finished. Saved: {$done}/" . count($pages),
+    'document_id' => $document_id,
+    'processed_pages' => $done,
+    'total_pages' => count($pages),
+    'errors' => $errors,
+    'prefill' => [
+        // map to your form fields
+        'invoice_date' => date('Y-m-d'),
+        'invoice_time' => date('H:i'),
+        'due_date'     => date('Y-m-d'),
+        'order_no'     => $parsed['invoice_no'],     // optional mapping
+        'reference_no' => '',
+        'subject'      => 'Customer: '.$parsed['customer_name']
+    ],
+    'parsed' => $parsed
+]);
+return;
+
 
     } catch (Throwable $e) {
         echo json_encode([

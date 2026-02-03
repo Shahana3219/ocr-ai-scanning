@@ -51,5 +51,12 @@ defined('BASEPATH') OR exit('No direct script access allowed');
 */
 $route['default_controller'] = 'equipmenttimesheets';
 
+// Invoice OCR Routes
+$route['upload-invoice-ocr'] = 'home/upload_invoice_ocr';
+$route['run_ocr'] = 'home/run_ocr';
+$route['run-ocr-max-accuracy'] = 'home/run_ocr_max_accuracy';
+$route['run-ocr-universal'] = 'home/run_ocr_universal';
+$route['save-invoice'] = 'home/save_invoice';
+
 $route['404_override'] = '';
 $route['translate_uri_dashes'] = FALSE;
