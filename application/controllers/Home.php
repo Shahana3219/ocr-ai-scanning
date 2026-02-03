@@ -437,13 +437,15 @@ private function preprocess_image_for_ocr($imagePath)
 
     $w = $img->getImageWidth();
     $h = $img->getImageHeight();
+   if ($w < 1800) {
     $img->resizeImage($w * 2, $h * 2, Imagick::FILTER_LANCZOS, 1);
+}
 
     $img->normalizeImage();
     $img->contrastImage(1);
 
-    $img->blurImage(1, 0.5);
-    $img->sharpenImage(1, 0.5);
+  
+    $img->sharpenImage(0, 1);
 
     $img->setImageResolution(300, 300);
     $img->resampleImage(300, 300, Imagick::FILTER_LANCZOS, 1);
@@ -454,8 +456,35 @@ private function preprocess_image_for_ocr($imagePath)
     $img->clear();
     $img->destroy();
 }
+private function tess_run($imagePath, $outBase, $lang = 'eng', $psm = 4, $oem = 1)
+{
+    $tesseract = '"C:\Program Files\Tesseract-OCR\tesseract.exe"';
+
+    // Make sure tessdata is found (important for Arabic)
+    putenv('TESSDATA_PREFIX=C:\Program Files\Tesseract-OCR\tessdata');
+
+    $cmd = $tesseract . ' '
+        . escapeshellarg($imagePath) . ' '
+        . escapeshellarg($outBase)
+        . ' --dpi 400'
+        . ' -l ' . escapeshellarg($lang)
+        . ' --oem ' . (int)$oem
+        . ' --psm ' . (int)$psm
+        . ' -c preserve_interword_spaces=1'
+        . ' 2>&1';
+
+    $out = [];
+    $code = 0;
+    exec($cmd, $out, $code);
+
+    $txtFile = $outBase . '.txt';
+   if ($code !== 0 || !file_exists($txtFile)) {
+    return "__TESS_FAIL__ LANG={$lang} CODE={$code}\n" . implode("\n",$out);
+}
 
 
+    return trim(file_get_contents($txtFile));
+}
 
 public function run_ocr()
 {
@@ -464,10 +493,6 @@ public function run_ocr()
     ini_set('display_errors', 1);
     error_reporting(E_ALL);
 
-    set_error_handler(function($severity,$message,$file,$line){
-        throw new ErrorException($message, 0, $severity, $file, $line);
-    });
-
     try {
 
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -475,7 +500,7 @@ public function run_ocr()
             return;
         }
 
-        $document_id = $this->input->post('document_id');
+        $document_id = (int)$this->input->post('document_id');
         if (!$document_id) {
             echo json_encode(['status'=>'error','message'=>'document_id is required']);
             return;
@@ -493,27 +518,10 @@ public function run_ocr()
             mkdir($tmpDir, 0777, true);
         }
 
-        // tesseract path
-        $tesseract = '"C:\Program Files\Tesseract-OCR\tesseract.exe"';
-
-        // languages
-        $lang = 'eng';
-        $psm  = 6;
-        $oem  = 1;
-
         $this->ocr_model->update_document_status($document_id, 'ocr_running');
 
         $done = 0;
         $errors = [];
-        // Combine all OCR text from DB pages (more reliable than tmp files)
-$allText = '';
-$pages2 = $this->ocr_model->get_pages($document_id);
-foreach ($pages2 as $pp) {
-    $allText .= "\n\n" . ($pp['ocr_text'] ?? '');
-}
-
-$parsed = $this->parse_invoice_from_text($allText);
-
 
         foreach ($pages as $p) {
 
@@ -525,68 +533,59 @@ $parsed = $this->parse_invoice_from_text($allText);
                 continue;
             }
 
-            // preprocess
-            $this->preprocess_image_for_ocr($imgAbs);
+            // preprocess safely (do not crash OCR)
+            try {
+                $this->preprocess_image_for_ocr($imgAbs);
+            } catch (Exception $ex) {
+                $errors[] = "Preprocess failed page {$p['page_no']}: " . $ex->getMessage();
+            }
 
             $tmpBase = $tmpDir . 'ocr_' . $document_id . '_' . $p['page_no'];
 
-            // ✅ TEXT output (no "tsv" at end)
-            $cmd = $tesseract . ' '
-                . escapeshellarg($imgAbs) . ' '
-                . escapeshellarg($tmpBase)
-                . ' -l ' . escapeshellarg($lang)
-                . ' --oem ' . $oem
-                . ' --psm ' . $psm;
+            // Dual-pass OCR
+            $ocrEng = $this->tess_run($imgAbs, $tmpBase . '_eng', 'eng', 4, 1);
+            $ocrAra = $this->tess_run($imgAbs, $tmpBase . '_ara', 'ara+eng', 4, 1);
 
-            $out = [];
-            $code = 0;
-            exec($cmd . ' 2>&1', $out, $code);
+            $ocrText = "=== ENG ===\n" . $ocrEng . "\n\n=== ARA+ENG ===\n" . $ocrAra;
 
-            if ($code !== 0) {
-                $errors[] = "Tesseract failed page {$p['page_no']}: " . implode(" | ", $out);
-                continue;
-            }
-
-            $txtFile = $tmpBase . '.txt';
-            if (!file_exists($txtFile)) {
-                $errors[] = "TXT not created page {$p['page_no']} (expected $txtFile)";
-                continue;
-            }
-
-            $ocrText = trim(file_get_contents($txtFile));
-
-            // ✅ Save to DB
             $ok = $this->ocr_model->update_page_ocr($document_id, $p['page_no'], $ocrText, null);
             if (!$ok) {
-                $errors[] = "DB update failed page {$p['page_no']}: " . $this->db->error();
+                $errors[] = "DB update failed page {$p['page_no']}: " . json_encode($this->db->error());
                 continue;
             }
 
             $done++;
         }
 
+        // Now parse AFTER OCR saved
+        $allText = '';
+        $pages2 = $this->ocr_model->get_pages($document_id);
+        foreach ($pages2 as $pp) {
+            $allText .= "\n\n" . ($pp['ocr_text'] ?? '');
+        }
+
+        $parsed = $this->parse_invoice_from_text($allText);
+
         $this->ocr_model->update_document_status($document_id, ($done > 0 ? 'ocr_done' : 'ocr_failed'));
 
-     echo json_encode([
-    'status' => ($done > 0 ? 'success' : 'error'),
-    'message' => "OCR finished. Saved: {$done}/" . count($pages),
-    'document_id' => $document_id,
-    'processed_pages' => $done,
-    'total_pages' => count($pages),
-    'errors' => $errors,
-    'prefill' => [
-        // map to your form fields
-        'invoice_date' => date('Y-m-d'),
-        'invoice_time' => date('H:i'),
-        'due_date'     => date('Y-m-d'),
-        'order_no'     => $parsed['invoice_no'],     // optional mapping
-        'reference_no' => '',
-        'subject'      => 'Customer: '.$parsed['customer_name']
-    ],
-    'parsed' => $parsed
-]);
-return;
-
+        echo json_encode([
+            'status' => ($done > 0 ? 'success' : 'error'),
+            'message' => "OCR finished. Saved: {$done}/" . count($pages),
+            'document_id' => $document_id,
+            'processed_pages' => $done,
+            'total_pages' => count($pages),
+            'errors' => $errors,
+            'prefill' => [
+                'invoice_date' => date('Y-m-d'),
+                'invoice_time' => date('H:i'),
+                'due_date'     => date('Y-m-d'),
+                'order_no'     => $parsed['invoice_no'] ?? '',
+                'reference_no' => '',
+                'subject'      => 'Customer: ' . ($parsed['customer_name'] ?? '')
+            ],
+            'parsed' => $parsed
+        ]);
+        return;
 
     } catch (Throwable $e) {
         echo json_encode([
