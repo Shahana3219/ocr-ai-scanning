@@ -1,0 +1,50 @@
+9 Kozhikode, Kerala, India
+‏هذا‎ shahana0rafeeq321@gmail.com oJ +91 8848516322 ff linkedin.com/in/shahnarfq @) github.com/Shahana3219
+PROFESSIONAL SUMMARY
+A passionate and detail-oriented IT professional with a solid understanding of programming languages, operating systems, and
+databases. Skilled in developing, testing, and integrating software solutions. Experienced in troubleshooting software issues and
+ensuring product quality. Eager to contribute ideas and collaborate in creating innovative software product
+EDUCATION
+B.Tech in Information Technology 2021 — 2025
+Govt. Engineering College Idukki CGPA: 7.6/10
+APJ Abdul Kalam Technological University, Kerala
+Higher Secondary (+2) 2017 — 2019
+MMVHSS, Parappil, Kozhikode Percentage: 94%
+Kerala State Board of Education
+SKILLS
+Programming Languages ~ : Python ,C
+Frameworks : Flutter
+Web Technologies : HTML, CSS
+Version Controls : Git, GitHub
+IDEs : Visual Studio Code, Android Studio
+Soft Skills : Excellent Communication, Leadership, Problem Solving , Time Management
+Languages : English, Malayalam
+CERTIFICATIONS
+Java Full Stack Front-End Development — Coursera
+PROFESSIONAL EXPERIENCE
+PHP Developer Intern Dec 2025 — Present
+9 Ethicfin, HiLITE Business Park Kozhikode -Kerala
+Flutter Developer Intern May 2025 — July 2025
+9 Scaleup Mission, HiLITE Business Park Kozhikode -Kerala
+Flutter Intern June 2024 — July 2024
+9 Spanixo Academy, Kinfra Advanced Technology Park, Ramanattukara, Kozhikode
+PROJECTS
+e Major Project:
+Thrive Ed — an android mobile application built using Flutter for the frontend and Django for the backend. It aims to enhance
+students’ learning and soft skills through SEL (Social Emotional Learning)- scores , reflections, and mentor support. Features include
+personalized dashboards,article publishing , mentor-student interactions, mentor - parent interactions , classroom management, and
+SEL progress visualization.
+e Mini Project:
+FestEve — an android mobile application developed using Flutter and Firebase designed to manage college events,voluteering
+efficiently. The app features event registration, dynamic scheduling, a real-time scoreboard, and instant result updates.
+e FinTrack:
+A web-based financial management web application developed using PHP (CodeIgniter) and MYSQL to efficiently manage
+income, expenses, and tracking transactions. The system features structured financial records, secure data handling, and compre-
+hensive reporting for better financial tracking.
+RELEVANT COURSEWORKS
+e Web Development
+e Database Management Systems(DBMS)
+e Object-Oriented Programming (OOP)
+EXTRACURRICULAR ACTIVITIES
+Event Coordinator: Coordinated an arts fest at college, managing a team of 10 members and overseeing event logistics, ensuring
+smooth execution of activities.
